@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "omnisearch": {
+      "type": "stdio",
+      "command": "C:\\nvm4w\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\Lukea\\AppData\\Roaming\\npm\\node_modules\\mcp-omnisearch\\dist\\index.js"
+      ],
+      "env": {
+        "APPDATA": "C:\\Users\\Lukea\\AppData\\Roaming\\",
+        "BRAVE_API_KEY": "BSAwJvBSVAnqKoUIbV4QVlUly2F-_rr",
+        "PERPLEXITY_API_KEY": "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"
+      }
+    },
+    "filesystem": {
+      "type": "stdio",
+      "command": "C:\\nvm4w\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\Lukea\\AppData\\Roaming\\npm\\node_modules\\@modelcontextprotocol\\server-filesystem\\dist\\index.js",
+        "C:\\jumpbro"
+      ],
+      "env": {
+        "APPDATA": "C:\\Users\\Lukea\\AppData\\Roaming\\"
+      }
+    },
+    "brave-search": {
+      "type": "stdio",
+      "command": "C:\\nvm4w\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\Lukea\\AppData\\Roaming\\npm\\node_modules\\@modelcontextprotocol\\server-brave-search\\dist\\index.js"
+      ],
+      "env": {
+        "APPDATA": "C:\\Users\\Lukea\\AppData\\Roaming\\",
+        "BRAVE_API_KEY": "BSAwJvBSVAnqKoUIbV4QVlUly2F-_rr"
+      }
+    }
+  }
+}

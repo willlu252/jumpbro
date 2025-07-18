@@ -1,0 +1,1045 @@
+        .health-bar {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            width: 200px;
+            height: 20px;
+            border: 2px solid #00ffff;
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(0,0,0,0.5);
+            box-shadow: 0 0 20px #00ffff;
+        }
+        .health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #ff0066, #ff6600, #00ff88);
+            transition: width 0.3s ease;
+            border-radius: 8px;
+            box-shadow: 0 0 15px currentColor;
+        }<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Martian Platformer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: radial-gradient(circle, #001122, #000000);
+            font-family: 'Courier New', monospace;
+        }
+        canvas {
+            display: block;
+        }
+        .ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #00ffff;
+            font-size: 20px;
+            text-shadow: 0 0 20px #00ffff, 0 0 40px #00ffff;
+            z-index: 100;
+        }
+        .game-over {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #ff4444;
+            font-size: 24px;
+            text-shadow: 0 0 20px #ff4444;
+            z-index: 200;
+            background: rgba(0,0,0,0.8);
+            padding: 30px;
+            border-radius: 10px;
+            border: 2px solid #ff4444;
+        }
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #ff00ff;
+            font-size: 16px;
+            text-shadow: 0 0 15px #ff00ff, 0 0 30px #ff00ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="ui">
+        <div>Score: <span id="score">0</span></div>
+        <div>Lives: <span id="lives">3</span></div>
+        <div class="health-bar">
+            <div id="healthFill" class="health-fill" style="width: 100%;"></div>
+        </div>
+        <div style="margin-top: 5px; font-size: 14px;">Health: <span id="health">100</span>/100</div>
+        <div id="superJumpStatus" style="color: #00aaff; font-size: 14px; margin-top: 5px;"></div>
+        <div id="dashStatus" style="color: #ffaa00; font-size: 14px;"></div>
+    </div>
+    
+    <div class="instructions">
+        A/D or ARROWS to move • W/UP to jump (double jump!) • SPACE to dash in air • Blue tablets = super jump! • R to restart • M to toggle music
+    </div>
+    
+    <div id="gameOver" class="game-over" style="display: none;">
+        <h2>GAME OVER</h2>
+        <p>Final Score: <span id="finalScore">0</span></p>
+        <p>Press R to restart</p>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="audio/synthwave-music.js"></script>
+    <script src="features/wing-system.js"></script>
+    <script src="effects/particle-system.js"></script>
+    <script>
+        // Game variables
+        let scene, camera, renderer, world;
+        let martian, platforms = [], collectibles = [], particles = [], lasers = [], hearts = [];
+        
+        // Make scene and martian globally accessible for modules
+        window.scene = null;
+        window.martian = null;
+        let gameState = {
+            score: 0,
+            lives: 3,
+            health: 100,
+            maxHealth: 100,
+            gameOver: false,
+            scrollSpeed: 0.02,
+            platformSpeed: 0.05,
+            lastLaserTime: 0,
+            laserCooldown: 3000 // 3 seconds between laser spawns
+        };
+        
+        // Input handling
+        const keys = {};
+        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
+        
+        // Physics
+        let martianVelocity = { x: 0, y: 0 };
+        let hasDoubleJump = true;
+        let jumpPressed = false;
+        let dashPressed = false;
+        const gravity = -0.008;
+        const jumpPower = 0.18;
+        const superJumpPower = 0.4; // Much higher jump when power-up is active
+        const doubleJumpPower = 0.16;
+        const dashPower = 0.25;
+        const moveSpeed = 0.1;
+        
+        function init() {
+            // Scene setup
+            scene = new THREE.Scene();
+            window.scene = scene; // Make globally accessible
+            scene.fog = new THREE.Fog(0x000428, 10, 50);
+            
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 2, 8);
+            
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000428);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+            
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0x4040ff, 0.4);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 5);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+            
+            const pointLight = new THREE.PointLight(0x00ffff, 0.6, 20);
+            pointLight.position.set(0, 5, 0);
+            scene.add(pointLight);
+            
+            // Add moving neon lights
+            const neonLight1 = new THREE.PointLight(0xff00ff, 0.4, 15);
+            neonLight1.position.set(-10, 3, 0);
+            scene.add(neonLight1);
+            
+            const neonLight2 = new THREE.PointLight(0xffff00, 0.4, 15);
+            neonLight2.position.set(10, 3, 0);
+            scene.add(neonLight2);
+            
+            createMartian();
+            createPlatforms();
+            createStarField();
+            createCollectibles();
+            createHearts();
+            createInitialPowerUps();
+            
+            // Initialize audio system
+            if (window.SynthwaveMusic) {
+                setTimeout(() => {
+                    window.SynthwaveMusic.startAmbient();
+                }, 1000);
+            }
+            
+            animate();
+        }
+        
+        function createMartian() {
+            // Martian body (using sphere for compatibility)
+            const bodyGeometry = new THREE.SphereGeometry(0.4, 16, 16);
+            const bodyMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x00ff88,
+                shininess: 100,
+                emissive: 0x002244
+            });
+            martian = new THREE.Mesh(bodyGeometry, bodyMaterial);
+            window.martian = martian; // Make globally accessible
+            martian.position.set(-5, 2, 0);
+            martian.castShadow = true;
+            martian.receiveShadow = true;
+            
+            // Eyes
+            const eyeGeometry = new THREE.SphereGeometry(0.08, 8, 8);
+            const eyeMaterial = new THREE.MeshPhongMaterial({ color: 0xffffff });
+            
+            const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            leftEye.position.set(-0.1, 0.2, 0.25);
+            martian.add(leftEye);
+            
+            const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+            rightEye.position.set(0.1, 0.2, 0.25);
+            martian.add(rightEye);
+            
+            // Pupils
+            const pupilGeometry = new THREE.SphereGeometry(0.04, 8, 8);
+            const pupilMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            
+            const leftPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
+            leftPupil.position.set(-0.1, 0.2, 0.29);
+            martian.add(leftPupil);
+            
+            const rightPupil = new THREE.Mesh(pupilGeometry, pupilMaterial);
+            rightPupil.position.set(0.1, 0.2, 0.29);
+            martian.add(rightPupil);
+            
+            // Antennae
+            const antennaGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.4);
+            const antennaMaterial = new THREE.MeshPhongMaterial({ color: 0x00aa22 });
+            
+            const leftAntenna = new THREE.Mesh(antennaGeometry, antennaMaterial);
+            leftAntenna.position.set(-0.15, 0.5, 0);
+            leftAntenna.rotation.z = 0.3;
+            martian.add(leftAntenna);
+            
+            const rightAntenna = new THREE.Mesh(antennaGeometry, antennaMaterial);
+            rightAntenna.position.set(0.15, 0.5, 0);
+            rightAntenna.rotation.z = -0.3;
+            martian.add(rightAntenna);
+            
+            // Antenna tips
+            const tipGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+            const tipMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffff00,
+                emissive: 0x444400
+            });
+            
+            const leftTip = new THREE.Mesh(tipGeometry, tipMaterial);
+            leftTip.position.set(-0.05, 0.18, 0);
+            leftAntenna.add(leftTip);
+            
+            const rightTip = new THREE.Mesh(tipGeometry, tipMaterial);
+            rightTip.position.set(0.05, 0.18, 0);
+            rightAntenna.add(rightTip);
+            
+            scene.add(martian);
+        }
+        
+        function createPlatforms() {
+            platforms = [];
+            
+            // Starting platform
+            createPlatform(-6, 0, 4, 0.2, 1);
+            
+            // Generate initial platforms with graduated difficulty
+            for (let i = 0; i < 20; i++) {
+                const x = -2 + i * 3 + Math.random() * 1.5;
+                
+                // Gradual difficulty increase in first 20 platforms
+                const difficultyRamp = Math.min(i / 15, 1); // 0 to 1 over 15 platforms
+                const baseHeight = Math.sin(i * 0.2) * 1.5; // Gentle wave pattern
+                const randomHeight = (Math.random() - 0.5) * (1 + difficultyRamp * 2);
+                const y = baseHeight + randomHeight;
+                
+                // Ensure first few platforms are easy to reach
+                const constrainedY = i < 5 ? Math.max(-0.5, Math.min(y, 1.5)) : Math.max(-1, Math.min(y, 3));
+                
+                const width = 2 + Math.random() * 1.5;
+                createPlatform(x, constrainedY, width, 0.2, 1);
+            }
+        }
+        
+        function createPlatform(x, y, width, height, depth) {
+            const geometry = new THREE.BoxGeometry(width, height, depth);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x6600ff,
+                shininess: 100,
+                emissive: 0x220044
+            });
+            const platform = new THREE.Mesh(geometry, material);
+            platform.position.set(x, y, 0);
+            platform.castShadow = true;
+            platform.receiveShadow = true;
+            platform.userData = { width, height, depth };
+            
+            // Add some glow effect
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x00ffff });
+            const wireframe = new THREE.LineSegments(edges, lineMaterial);
+            platform.add(wireframe);
+            
+            platforms.push(platform);
+            scene.add(platform);
+        }
+        
+        function createStarField() {
+            const starGeometry = new THREE.BufferGeometry();
+            const starCount = 1000;
+            const positions = new Float32Array(starCount * 3);
+            
+            for (let i = 0; i < starCount * 3; i += 3) {
+                positions[i] = (Math.random() - 0.5) * 200;     // x
+                positions[i + 1] = (Math.random() - 0.5) * 100; // y
+                positions[i + 2] = (Math.random() - 0.5) * 100; // z
+            }
+            
+            starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            const starMaterial = new THREE.PointsMaterial({ 
+                color: 0xffffff,
+                size: 2,
+                sizeAttenuation: false
+            });
+            
+            const stars = new THREE.Points(starGeometry, starMaterial);
+            scene.add(stars);
+            
+            // Add some larger, colourful stars
+            for (let i = 0; i < 50; i++) {
+                const star = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.1, 8, 8),
+                    new THREE.MeshBasicMaterial({ 
+                        color: new THREE.Color().setHSL(Math.random(), 0.8, 0.8),
+                        transparent: true,
+                        opacity: 0.8
+                    })
+                );
+                star.position.set(
+                    (Math.random() - 0.5) * 100,
+                    (Math.random() - 0.5) * 50,
+                    (Math.random() - 0.5) * 50
+                );
+                scene.add(star);
+                particles.push(star);
+            }
+        }
+        
+        function createCollectibles() {
+            collectibles = [];
+            
+            for (let i = 0; i < 15; i++) {
+                const x = i * 4 + Math.random() * 2;
+                const y = 2 + Math.random() * 3;
+                
+                const geometry = new THREE.OctahedronGeometry(0.2);
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: 0xffff00,
+                    emissive: 0x664400,
+                    shininess: 100
+                });
+                const collectible = new THREE.Mesh(geometry, material);
+                collectible.position.set(x, y, 0);
+                
+                collectibles.push(collectible);
+                scene.add(collectible);
+            }
+        }
+        
+        function createHearts() {
+            hearts = [];
+            
+            for (let i = 0; i < 8; i++) {
+                const x = i * 6 + Math.random() * 3;
+                const y = 1 + Math.random() * 4;
+                createHeart(x, y);
+            }
+        }
+        
+        function createInitialPowerUps() {
+            powerUps = [];
+            
+            // Create a few power-ups scattered around
+            for (let i = 0; i < 4; i++) {
+                const x = 10 + i * 12 + Math.random() * 5;
+                const y = 2 + Math.random() * 3;
+                createPowerUp(x, y);
+            }
+        }
+        
+        function createHeart(x, y) {
+            // Create heart shape using two spheres and a rotated cube
+            const heartGroup = new THREE.Group();
+            
+            // Left sphere
+            const leftSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(0.15, 12, 12),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xff4444,
+                    emissive: 0x220000,
+                    shininess: 100
+                })
+            );
+            leftSphere.position.set(-0.1, 0.05, 0);
+            heartGroup.add(leftSphere);
+            
+            // Right sphere
+            const rightSphere = new THREE.Mesh(
+                new THREE.SphereGeometry(0.15, 12, 12),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xff4444,
+                    emissive: 0x220000,
+                    shininess: 100
+                })
+            );
+            rightSphere.position.set(0.1, 0.05, 0);
+            heartGroup.add(rightSphere);
+            
+            // Bottom triangle
+            const triangle = new THREE.Mesh(
+                new THREE.ConeGeometry(0.2, 0.3, 4),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xff4444,
+                    emissive: 0x220000,
+                    shininess: 100
+                })
+            );
+            triangle.position.set(0, -0.1, 0);
+            triangle.rotation.z = Math.PI;
+            triangle.rotation.y = Math.PI / 4;
+            heartGroup.add(triangle);
+            
+            heartGroup.position.set(x, y, 0);
+            heartGroup.userData = { type: 'heart' };
+            
+            hearts.push(heartGroup);
+            scene.add(heartGroup);
+        }
+        
+        function createLaser(startX, startY, direction) {
+            const laserGroup = new THREE.Group();
+            
+            // Laser beam
+            const beam = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.02, 0.02, 1.5),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xff0000,
+                    emissive: 0xff0000,
+                    transparent: true,
+                    opacity: 0.8
+                })
+            );
+            beam.rotation.z = Math.PI / 2;
+            laserGroup.add(beam);
+            
+            // Laser glow
+            const glow = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.05, 0.05, 1.5),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xff4444,
+                    transparent: true,
+                    opacity: 0.3
+                })
+            );
+            glow.rotation.z = Math.PI / 2;
+            laserGroup.add(glow);
+            
+            laserGroup.position.set(startX, startY, 0);
+            laserGroup.userData = { 
+                velocity: direction * 0.15,
+                type: 'laser'
+            };
+            
+            lasers.push(laserGroup);
+            scene.add(laserGroup);
+        }
+        
+        function createPowerUp(x, y) {
+            // Power-up tablet
+            const tabletGroup = new THREE.Group();
+            
+            // Main tablet body
+            const tablet = new THREE.Mesh(
+                new THREE.BoxGeometry(0.4, 0.6, 0.1),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0x00aaff,
+                    emissive: 0x002244,
+                    shininess: 100
+                })
+            );
+            tabletGroup.add(tablet);
+            
+            // Screen glow
+            const screen = new THREE.Mesh(
+                new THREE.BoxGeometry(0.3, 0.4, 0.11),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0x44ddff,
+                    emissive: 0x226688,
+                    transparent: true,
+                    opacity: 0.8
+                })
+            );
+            tabletGroup.add(screen);
+            
+            // Jump symbol (upward arrow)
+            const arrow = new THREE.Mesh(
+                new THREE.ConeGeometry(0.08, 0.2, 6),
+                new THREE.MeshPhongMaterial({ 
+                    color: 0xffffff,
+                    emissive: 0x444444
+                })
+            );
+            arrow.position.z = 0.06;
+            tabletGroup.add(arrow);
+            
+            tabletGroup.position.set(x, y, 0);
+            tabletGroup.userData = { type: 'powerup' };
+            
+            powerUps.push(tabletGroup);
+            scene.add(tabletGroup);
+        }
+        
+        function spawnRandomLaser() {
+            const currentTime = Date.now();
+            if (currentTime - gameState.lastLaserTime > gameState.laserCooldown) {
+                const martianX = martian.position.x;
+                const spawnX = martianX + (Math.random() > 0.5 ? 8 : -8);
+                const spawnY = 1 + Math.random() * 4;
+                const direction = spawnX > martianX ? -1 : 1;
+                
+                createLaser(spawnX, spawnY, direction);
+                gameState.lastLaserTime = currentTime;
+                
+                // Reduce cooldown slightly as game progresses
+                gameState.laserCooldown = Math.max(1500, 3000 - gameState.score * 2);
+            }
+        }
+        
+        function updateInput() {
+            if (gameState.gameOver) {
+                if (keys['KeyR']) {
+                    restartGame();
+                }
+                return;
+            }
+            
+            // Toggle music
+            if (keys['KeyM']) {
+                if (window.SynthwaveMusic) {
+                    if (window.SynthwaveMusic.isPlaying) {
+                        window.SynthwaveMusic.stop();
+                    } else {
+                        window.SynthwaveMusic.startAmbient();
+                    }
+                }
+                keys['KeyM'] = false; // Prevent multiple toggles
+            }
+            
+            const currentTime = Date.now();
+            
+            // Horizontal movement
+            if (keys['ArrowLeft'] || keys['KeyA']) {
+                martianVelocity.x = Math.max(martianVelocity.x - 0.01, -moveSpeed);
+            } else if (keys['ArrowRight'] || keys['KeyD']) {
+                martianVelocity.x = Math.min(martianVelocity.x + 0.01, moveSpeed);
+            } else {
+                martianVelocity.x *= 0.9; // Friction
+            }
+            
+            // Jumping with double jump and super jump
+            const jumpKeyPressed = keys['ArrowUp'] || keys['KeyW'];
+            
+            if (jumpKeyPressed && !jumpPressed) {
+                const currentJumpPower = gameState.superJumpActive ? superJumpPower : jumpPower;
+                const currentDoubleJumpPower = gameState.superJumpActive ? superJumpPower * 0.8 : doubleJumpPower;
+                
+                if (isOnGround()) {
+                    // First jump from ground
+                    martianVelocity.y = currentJumpPower;
+                    hasDoubleJump = true;
+                    if (window.SynthwaveMusic) window.SynthwaveMusic.onPlayerJump();
+                    if (window.ParticleSystem) window.ParticleSystem.jumpParticles(martian.position);
+                } else if (hasDoubleJump) {
+                    // Double jump in air
+                    martianVelocity.y = currentDoubleJumpPower;
+                    hasDoubleJump = false;
+                    if (window.SynthwaveMusic) window.SynthwaveMusic.onPlayerJump();
+                    if (window.ParticleSystem) window.ParticleSystem.jumpParticles(martian.position);
+                }
+            }
+            
+            jumpPressed = jumpKeyPressed;
+            
+            // Dash mechanics with Space bar
+            const spacePressed = keys['Space'];
+            
+            if (spacePressed && !dashPressed && gameState.canDash && !isOnGround()) {
+                if (currentTime - gameState.lastDashTime > gameState.dashCooldown) {
+                    // Perform dash in the direction martian is facing
+                    const dashDirection = martianVelocity.x >= 0 ? 1 : -1;
+                    martianVelocity.x = dashDirection * dashPower;
+                    martianVelocity.y *= 0.5; // Slow down vertical movement during dash
+                    
+                    gameState.lastDashTime = currentTime;
+                    gameState.canDash = false;
+                    if (window.SynthwaveMusic) window.SynthwaveMusic.onPlayerDash();
+                    if (window.WingSystem) window.WingSystem.onDashStart();
+                    
+                    // Reset dash when landing
+                    setTimeout(() => {
+                        if (isOnGround()) {
+                            gameState.canDash = true;
+                        }
+                        if (window.WingSystem) window.WingSystem.onDashEnd();
+                    }, 100);
+                }
+            }
+            
+            dashPressed = spacePressed;
+            
+            // Reset dash when on ground
+            if (isOnGround()) {
+                gameState.canDash = true;
+            }
+        }
+        
+        function isOnGround() {
+            for (let platform of platforms) {
+                const dx = Math.abs(martian.position.x - platform.position.x);
+                const dy = martian.position.y - platform.position.y;
+                
+                if (dx < platform.userData.width / 2 + 0.3 && 
+                    dy > platform.userData.height / 2 && 
+                    dy < platform.userData.height / 2 + 0.4) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        function updatePhysics() {
+            if (gameState.gameOver) return;
+            
+            const currentTime = Date.now();
+            
+            // Check if super jump should end
+            if (gameState.superJumpActive && currentTime > gameState.superJumpEndTime) {
+                gameState.superJumpActive = false;
+            }
+            
+            // Apply gravity
+            martianVelocity.y += gravity;
+            
+            // Update position
+            martian.position.x += martianVelocity.x;
+            martian.position.y += martianVelocity.y;
+            
+            // Platform collision
+            for (let platform of platforms) {
+                const dx = Math.abs(martian.position.x - platform.position.x);
+                const dy = martian.position.y - platform.position.y;
+                
+                if (dx < platform.userData.width / 2 + 0.3) {
+                    // Landing on top
+                    if (martianVelocity.y < 0 && dy > platform.userData.height / 2 && 
+                        dy < platform.userData.height / 2 + 0.4) {
+                        martian.position.y = platform.position.y + platform.userData.height / 2 + 0.3;
+                        martianVelocity.y = 0;
+                        hasDoubleJump = true; // Reset double jump when landing
+                    }
+                    // Hitting from below
+                    else if (martianVelocity.y > 0 && dy < -platform.userData.height / 2 && 
+                             dy > -platform.userData.height / 2 - 0.4) {
+                        martianVelocity.y = 0;
+                    }
+                }
+            }
+            
+            // Update lasers
+            for (let i = lasers.length - 1; i >= 0; i--) {
+                const laser = lasers[i];
+                laser.position.x += laser.userData.velocity;
+                
+                // Remove lasers that are too far away
+                if (Math.abs(laser.position.x - martian.position.x) > 15) {
+                    scene.remove(laser);
+                    lasers.splice(i, 1);
+                    continue;
+                }
+                
+                // Check laser collision with martian
+                const distance = martian.position.distanceTo(laser.position);
+                if (distance < 0.5) {
+                    // Damage martian
+                    takeDamage(20);
+                    
+                    // Remove laser
+                    scene.remove(laser);
+                    lasers.splice(i, 1);
+                }
+            }
+            
+            // Spawn random lasers
+            spawnRandomLaser();
+            
+            // Check death conditions
+            if (martian.position.y < -10) {
+                gameState.lives--;
+                if (gameState.lives <= 0) {
+                    gameOver();
+                } else {
+                    respawnMartian();
+                }
+            }
+            
+            // Collectible collision
+            for (let i = collectibles.length - 1; i >= 0; i--) {
+                const collectible = collectibles[i];
+                const distance = martian.position.distanceTo(collectible.position);
+                
+                if (distance < 0.5) {
+                    if (window.ParticleSystem) {
+                        window.ParticleSystem.collectibleSparkle(collectible.position);
+                        window.ParticleSystem.collectionExplosion(collectible.position);
+                    }
+                    scene.remove(collectible);
+                    collectibles.splice(i, 1);
+                    gameState.score += 10;
+                    if (window.SynthwaveMusic) window.SynthwaveMusic.onCollectItem();
+                    updateUI();
+                }
+            }
+            
+            // Heart collision
+            for (let i = hearts.length - 1; i >= 0; i--) {
+                const heart = hearts[i];
+                const distance = martian.position.distanceTo(heart.position);
+                
+                if (distance < 0.5) {
+                    // Heal martian
+                    gameState.health = Math.min(gameState.maxHealth, gameState.health + 25);
+                    
+                    scene.remove(heart);
+                    hearts.splice(i, 1);
+                    updateUI();
+                }
+            }
+            
+            // Power-up collision
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const powerUp = powerUps[i];
+                const distance = martian.position.distanceTo(powerUp.position);
+                
+                if (distance < 0.5) {
+                    // Activate super jump
+                    gameState.superJumpActive = true;
+                    gameState.superJumpEndTime = currentTime + 15000; // 15 seconds
+                    if (window.SynthwaveMusic) window.SynthwaveMusic.onPowerUp();
+                    if (window.ParticleSystem) window.ParticleSystem.powerUpGlow(powerUp.position);
+                    
+                    scene.remove(powerUp);
+                    powerUps.splice(i, 1);
+                    updateUI();
+                }
+            }
+            
+            // Camera follow
+            camera.position.x = martian.position.x - 3;
+            
+            // Generate new platforms
+            if (martian.position.x > platforms[platforms.length - 10].position.x) {
+                generateMorePlatforms();
+            }
+        }
+        
+        function takeDamage(amount) {
+            gameState.health -= amount;
+            if (window.SynthwaveMusic) window.SynthwaveMusic.onTakeDamage();
+            if (gameState.health <= 0) {
+                gameState.health = 0;
+                gameState.lives--;
+                if (gameState.lives <= 0) {
+                    gameOver();
+                } else {
+                    respawnMartian();
+                }
+            }
+            updateUI();
+            
+            // Visual feedback - flash the martian red
+            martian.material.emissive.setHex(0x440000);
+            setTimeout(() => {
+                if (martian && martian.material) {
+                    martian.material.emissive.setHex(0x001122);
+                }
+            }, 200);
+        }
+        
+        function generateMorePlatforms() {
+            const lastPlatform = platforms[platforms.length - 1];
+            for (let i = 0; i < 10; i++) {
+                const x = lastPlatform.position.x + 3 + i * 3 + Math.random() * 2;
+                
+                // Improved platform height generation for better difficulty curve
+                const difficulty = Math.min(gameState.score / 100, 1); // Scale difficulty with score
+                const baseHeight = Math.sin(i * 0.3) * 2; // Wave pattern for variety
+                const randomHeight = (Math.random() - 0.5) * (2 + difficulty * 2); // Increase variation with difficulty
+                const y = baseHeight + randomHeight;
+                
+                // Ensure platforms are always reachable with jump + dash
+                const maxJumpHeight = jumpPower * 15 + dashPower * 5; // Approximate max reachable height
+                const constrainedY = Math.max(-1, Math.min(y, maxJumpHeight - 1));
+                
+                const width = 1.5 + Math.random() * 1.5; // Slightly smaller platforms for challenge
+                createPlatform(x, constrainedY, width, 0.2, 1);
+                
+                // Add collectibles
+                if (Math.random() < 0.3) {
+                    const geometry = new THREE.OctahedronGeometry(0.2);
+                    const material = new THREE.MeshPhongMaterial({ 
+                        color: 0xffdd00,
+                        emissive: 0x442200,
+                        shininess: 100
+                    });
+                    const collectible = new THREE.Mesh(geometry, material);
+                    collectible.position.set(x, y + 1, 0);
+                    collectibles.push(collectible);
+                    scene.add(collectible);
+                }
+                
+                // Add hearts occasionally
+                if (Math.random() < 0.15) {
+                    createHeart(x, y + 1.5);
+                }
+                
+                // Add power-ups rarely
+                if (Math.random() < 0.08) {
+                    createPowerUp(x, y + 2);
+                }
+            }
+        }
+        
+        function respawnMartian() {
+            martian.position.set(-5, 2, 0);
+            martianVelocity = { x: 0, y: 0 };
+            hasDoubleJump = true;
+            jumpPressed = false;
+            gameState.health = gameState.maxHealth; // Reset health on respawn
+            camera.position.x = 0;
+            updateUI();
+        }
+        
+        function gameOver() {
+            gameState.gameOver = true;
+            document.getElementById('finalScore').textContent = gameState.score;
+            document.getElementById('gameOver').style.display = 'block';
+        }
+        
+        function restartGame() {
+            gameState = {
+                score: 0,
+                lives: 3,
+                health: 100,
+                maxHealth: 100,
+                gameOver: false,
+                scrollSpeed: 0.02,
+                platformSpeed: 0.05,
+                lastLaserTime: 0,
+                laserCooldown: 3000,
+                superJumpActive: false,
+                superJumpEndTime: 0,
+                canDash: true,
+                dashCooldown: 1000,
+                lastDashTime: 0
+            };
+            
+            // Clear existing platforms, collectibles, lasers, hearts, and power-ups
+            platforms.forEach(platform => scene.remove(platform));
+            collectibles.forEach(collectible => scene.remove(collectible));
+            lasers.forEach(laser => scene.remove(laser));
+            hearts.forEach(heart => scene.remove(heart));
+            powerUps.forEach(powerUp => scene.remove(powerUp));
+            
+            // Reset arrays
+            platforms = [];
+            collectibles = [];
+            lasers = [];
+            hearts = [];
+            powerUps = [];
+            
+            // Reset martian
+            respawnMartian();
+            
+            // Recreate world
+            createPlatforms();
+            createCollectibles();
+            createHearts();
+            createInitialPowerUps();
+            
+            document.getElementById('gameOver').style.display = 'none';
+            updateUI();
+        }
+        
+        function updateUI() {
+            document.getElementById('score').textContent = gameState.score;
+            document.getElementById('lives').textContent = gameState.lives;
+            document.getElementById('health').textContent = gameState.health;
+            
+            // Update health bar
+            const healthPercentage = (gameState.health / gameState.maxHealth) * 100;
+            document.getElementById('healthFill').style.width = healthPercentage + '%';
+            
+            // Update super jump status
+            const superJumpElement = document.getElementById('superJumpStatus');
+            if (gameState.superJumpActive) {
+                const timeLeft = Math.max(0, (gameState.superJumpEndTime - Date.now()) / 1000);
+                superJumpElement.textContent = `SUPER JUMP: ${timeLeft.toFixed(1)}s`;
+                superJumpElement.style.display = 'block';
+            } else {
+                superJumpElement.style.display = 'none';
+            }
+            
+            // Update dash status
+            const dashElement = document.getElementById('dashStatus');
+            const timeSinceLastDash = Date.now() - gameState.lastDashTime;
+            if (!gameState.canDash && timeSinceLastDash < gameState.dashCooldown) {
+                const cooldownLeft = (gameState.dashCooldown - timeSinceLastDash) / 1000;
+                dashElement.textContent = `Dash cooldown: ${cooldownLeft.toFixed(1)}s`;
+                dashElement.style.display = 'block';
+            } else if (gameState.canDash && !isOnGround()) {
+                dashElement.textContent = 'DASH READY!';
+                dashElement.style.display = 'block';
+            } else {
+                dashElement.style.display = 'none';
+            }
+        }
+        
+        function updateAnimations() {
+            const time = Date.now() * 0.001;
+            
+            // Rotate collectibles
+            collectibles.forEach(collectible => {
+                collectible.rotation.y += 0.02;
+                collectible.position.y += Math.sin(time * 2 + collectible.position.x) * 0.005;
+                
+                // Add continuous sparkle effect (reduced frequency for performance)
+                if (Math.random() < 0.05 && window.ParticleSystem) {
+                    window.ParticleSystem.collectibleSparkle(collectible.position);
+                }
+            });
+            
+            // Animate hearts
+            hearts.forEach(heart => {
+                heart.rotation.y += 0.03;
+                heart.position.y += Math.sin(time * 3 + heart.position.x) * 0.008;
+                // Pulsing effect
+                const scale = 1 + Math.sin(time * 4 + heart.position.x) * 0.1;
+                heart.scale.set(scale, scale, scale);
+            });
+            
+            // Animate power-ups
+            powerUps.forEach(powerUp => {
+                powerUp.rotation.y += 0.02;
+                powerUp.position.y += Math.sin(time * 2 + powerUp.position.x) * 0.01;
+                // Glowing effect
+                const glow = 1 + Math.sin(time * 5) * 0.3;
+                powerUp.children[1].material.emissive.setScalar(0.2 * glow);
+            });
+            
+            // Animate lasers
+            lasers.forEach(laser => {
+                // Pulsing glow effect
+                const intensity = 0.5 + Math.sin(time * 10) * 0.3;
+                if (laser.children[1]) {
+                    laser.children[1].material.opacity = intensity * 0.3;
+                }
+            });
+            
+            // Animate particles
+            particles.forEach(particle => {
+                particle.rotation.x += 0.01;
+                particle.rotation.y += 0.01;
+            });
+            
+            // Martian animation
+            if (!gameState.gameOver) {
+                martian.rotation.z = martianVelocity.x * 0.5;
+                
+                // Bobbing animation when on ground
+                if (isOnGround()) {
+                    martian.position.y += Math.sin(time * 10) * 0.01;
+                }
+                
+                // Super jump visual effect
+                if (gameState.superJumpActive) {
+                    martian.material.emissive.setHex(0x002244);
+                    const pulse = Math.sin(time * 8) * 0.1;
+                    martian.scale.set(1 + pulse, 1 + pulse, 1 + pulse);
+                } else {
+                    martian.material.emissive.setHex(0x001122);
+                    martian.scale.set(1, 1, 1);
+                }
+                
+                // Add dash trail particles when moving fast (throttled for performance)
+                if (Math.abs(martianVelocity.x) > 0.15 && window.ParticleSystem && Math.random() < 0.3) {
+                    window.ParticleSystem.dashTrail(martian.position);
+                }
+            }
+        }
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            updateInput();
+            updatePhysics();
+            updateAnimations();
+            
+            // Update wing system
+            if (window.WingSystem) {
+                window.WingSystem.update(0.016);
+            }
+            
+            // Update particle system
+            if (window.ParticleSystem) {
+                window.ParticleSystem.update(0.016);
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Initialize game
+        init();
+    </script>
+</body>
+</html>
